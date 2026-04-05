@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Language Modeling using BERT</title>
+
+  <!-- Google Fonts: Orbitron for headings, Rajdhani for body -->
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;900&family=Rajdhani:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+
+  <style>
+    /* ============================================================
+       CSS VARIABLES & RESET
+    ============================================================ */
+    :root {
+      --bg:          #07070f;
+      --bg2:         #0e0e1a;
+      --bg3:         #13131f;
+      --purple:      #9333ea;
+      --purple-dim:  #6b1fbe;
+      --purple-glow: #c084fc;
+      --purple-faint:#1a0a2e;
+      --cyan:        #22d3ee;
+      --white:       #f0e8ff;
+      --muted:       #7c6e9a;
+      --border:      rgba(147, 51, 234, 0.25);
+      --radius:      14px;
+      --transition:  0.35s cubic-bezier(.4,0,.2,1);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--white);
+      font-family: 'Rajdhani', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ============================================================
+       ANIMATED GRID BACKGROUND
+    ============================================================ */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(147,51,234,.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(147,51,234,.04) 1px, transparent 1px);
+      background-size: 44px 44px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Glowing orb top-left */
+    body::after {
+      content: '';
+      position: fixed;
+      top: -180px; left: -180px;
+      width: 520px; height: 520px;
+      background: radial-gradient(circle, rgba(147,51,234,.18) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+      animation: orb 8s ease-in-out infinite alternate;
+    }
+    @keyframes orb {
+      from { transform: translate(0,0); }
+      to   { transform: translate(80px, 60px); }
+    }
+
+    /* ============================================================
+       PAGE HEADER
+    ============================================================ */
+    header {
+      position: relative; z-index: 10;
+      text-align: center;
+      padding: 44px 20px 28px;
+    }
+    header .label {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 11px;
+      letter-spacing: 5px;
+      color: var(--purple-glow);
+      text-transform: uppercase;
+      opacity: .7;
+      margin-bottom: 10px;
+    }
+    header h1 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: clamp(22px, 4vw, 40px);
+      font-weight: 900;
+      letter-spacing: 2px;
+      background: linear-gradient(135deg, var(--white) 30%, var(--purple-glow) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1.2;
+    }
+    header .subtitle {
+      margin-top: 10px;
+      font-size: 15px;
+      color: var(--muted);
+      font-weight: 400;
+      letter-spacing: 1px;
+    }
+
+    /* ============================================================
+       MAIN LAYOUT
+    ============================================================ */
+    .stage {
+      position: relative; z-index: 10;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 0;
+      padding: 10px 20px 60px;
+      min-height: calc(100vh - 160px);
+    }
+
+    /* SVG connector layer — sits between flow and panel */
+    #svg-connector {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 5;
+      overflow: visible;
+    }
+
+    /* ============================================================
+       FLOW DIAGRAM COLUMN
+    ============================================================ */
+    .flow-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+      flex-shrink: 0;
+      width: 260px;
+      padding-top: 10px;
+    }
+
+    /* ---- NODE BOX ---- */
+    .node {
+      position: relative;
+      width: 220px;
+      padding: 13px 20px;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      cursor: pointer;
+      text-align: center;
+      transition:
+        transform var(--transition),
+        border-color var(--transition),
+        box-shadow var(--transition),
+        background var(--transition);
+
+      /* start hidden for stagger animation */
+      opacity: 0;
+      transform: translateY(28px);
+    }
+    .node .node-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 11.5px;
+      font-weight: 600;
+      letter-spacing: 1.2px;
+      color: var(--white);
+      pointer-events: none;
+    }
+    .node .node-sub {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 3px;
+      pointer-events: none;
+    }
+
+    /* Hover */
+    .node:hover {
+      transform: scale(1.045);
+      border-color: var(--purple-glow);
+      box-shadow: 0 0 18px rgba(147,51,234,.35), 0 0 4px rgba(192,132,252,.15);
+    }
+
+    /* Active / selected */
+    .node.active {
+      border-color: var(--purple);
+      background: linear-gradient(135deg, #1a0d2e 0%, #120929 100%);
+      box-shadow:
+        0 0 0 2px var(--purple),
+        0 0 28px rgba(147,51,234,.55),
+        0 0 60px rgba(147,51,234,.2);
+    }
+    .node.active .node-title {
+      color: var(--purple-glow);
+    }
+
+    /* MAIN chain node colors */
+    .node.chain   { border-left: 3px solid var(--purple-dim); }
+    .node.bert-node {
+      width: 230px;
+      background: linear-gradient(135deg, #1a0a30, #0e0e1a);
+      border-color: var(--purple);
+      border-width: 2px;
+      box-shadow: 0 0 22px rgba(147,51,234,.3);
+    }
+    .node.bert-node .node-title { color: var(--purple-glow); font-size: 14px; }
+
+    /* Branch tier nodes */
+    .node.branch  { width: 200px; border-left: 3px solid #6b1fbe; }
+    .node.leaf    {
+      width: 180px;
+      background: var(--bg3);
+      border-left: 3px solid rgba(147,51,234,.4);
+      font-size: 10.5px;
+    }
+
+    /* ---- ARROWS between main chain ---- */
+    .arrow-down {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+      opacity: 0;
+      transition: opacity .5s ease;
+    }
+    .arrow-down.visible { opacity: 1; }
+    .arrow-down .line {
+      width: 2px;
+      height: 22px;
+      background: linear-gradient(to bottom, var(--purple-dim), var(--purple));
+      position: relative;
+    }
+    .arrow-down .head {
+      width: 0; height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 9px solid var(--purple);
+    }
+
+    /* ---- BERT BRANCH SECTION ---- */
+    .bert-branches {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 100%;
+      margin-top: 0;
+    }
+
+    /* Horizontal bar from BERT to branches */
+    .branch-connector {
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      width: 100%;
+      position: relative;
+      padding-top: 2px;
+      opacity: 0;
+      transition: opacity .5s ease .8s;
+    }
+    .branch-connector.visible { opacity: 1; }
+
+    /* Three branch columns */
+    .branch-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+    }
+
+    /* Vertical line from BERT down to horizontal bar */
+    .vert-stem {
+      width: 2px;
+      height: 24px;
+      background: linear-gradient(to bottom, var(--purple-dim), var(--purple));
+    }
+
+    /* Horizontal connecting bar */
+    .horiz-bar {
+      position: absolute;
+      top: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      height: 2px;
+      background: linear-gradient(to right, transparent, var(--purple), var(--purple), transparent);
+      width: 68%;
+    }
+
+    /* Short vertical stems to each branch */
+    .branch-drop {
+      width: 2px;
+      height: 20px;
+      background: var(--purple);
+    }
+    .branch-arrow-head {
+      width: 0; height: 0;
+      border-left: 5px solid transparent;
+      border-right: 5px solid transparent;
+      border-top: 7px solid var(--purple);
+    }
+
+    /* Branch group wrapper */
+    .branch-group {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+      padding: 0 6px;
+    }
+
+    /* Leaf section separator */
+    .leaf-stem {
+      width: 2px;
+      height: 14px;
+      background: rgba(147,51,234,.5);
+    }
+    .leaf-row {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .leaf-arrow-tiny {
+      width: 0; height: 0;
+      border-left: 4px solid transparent;
+      border-right: 4px solid transparent;
+      border-top: 6px solid rgba(147,51,234,.5);
+    }
+
+    /* ============================================================
+       DESCRIPTION PANEL (RIGHT SIDE)
+    ============================================================ */
+    .panel-col {
+      position: sticky;
+      top: 30px;
+      width: 300px;
+      flex-shrink: 0;
+      margin-left: 60px;
+      align-self: flex-start;
+    }
+
+    #desc-panel {
+      background: linear-gradient(135deg, #110c22, #0d0a1a);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 28px 24px 24px;
+      min-height: 200px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 0 40px rgba(147,51,234,.1);
+
+      /* Hidden by default */
+      opacity: 0;
+      transform: translateX(30px);
+      transition: opacity .4s ease, transform .4s ease;
+    }
+    #desc-panel.visible {
+      opacity: 1;
+      transform: translateX(0);
+    }
+
+    /* Decorative top gradient bar */
+    #desc-panel::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, transparent, var(--purple), var(--purple-glow), transparent);
+    }
+
+    /* Corner accent */
+    #desc-panel::after {
+      content: '';
+      position: absolute;
+      bottom: -40px; right: -40px;
+      width: 120px; height: 120px;
+      background: radial-gradient(circle, rgba(147,51,234,.12), transparent 70%);
+      pointer-events: none;
+    }
+
+    #desc-panel .panel-tag {
+      font-size: 10px;
+      letter-spacing: 3px;
+      color: var(--purple-glow);
+      text-transform: uppercase;
+      opacity: .7;
+      margin-bottom: 10px;
+    }
+    #desc-panel .panel-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--white);
+      margin-bottom: 14px;
+      line-height: 1.35;
+    }
+    #desc-panel .panel-body {
+      font-size: 14px;
+      line-height: 1.7;
+      color: #c4b5d8;
+      font-weight: 400;
+    }
+
+    /* Type badge */
+    #desc-panel .panel-badge {
+      display: inline-block;
+      margin-top: 16px;
+      padding: 4px 12px;
+      border-radius: 99px;
+      background: rgba(147,51,234,.15);
+      border: 1px solid rgba(147,51,234,.3);
+      font-size: 11px;
+      letter-spacing: 1px;
+      color: var(--purple-glow);
+      font-family: 'Orbitron', sans-serif;
+    }
+
+    /* Placeholder text */
+    .panel-placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 160px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+      gap: 12px;
+      opacity: .6;
+    }
+    .panel-placeholder svg {
+      opacity: .4;
+    }
+
+    /* Panel content fade on update */
+    .panel-content-inner {
+      animation: fadeUp .35s ease forwards;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ============================================================
+       SVG CONNECTOR LINE
+    ============================================================ */
+    #connector-line {
+      stroke: var(--purple);
+      stroke-width: 1.5;
+      stroke-dasharray: 5 4;
+      fill: none;
+      opacity: 0;
+      transition: opacity .4s ease;
+      filter: drop-shadow(0 0 3px rgba(147,51,234,.7));
+    }
+    #connector-dot {
+      fill: var(--purple-glow);
+      opacity: 0;
+      transition: opacity .4s ease;
+    }
+    #connector-line.visible,
+    #connector-dot.visible { opacity: 1; }
+
+    /* ============================================================
+       INSTRUCTION HINT
+    ============================================================ */
+    .hint {
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 1.5px;
+      padding: 0 20px 24px;
+      position: relative; z-index: 10;
+      opacity: .6;
+    }
+
+    /* ============================================================
+       SCROLLBAR STYLE
+    ============================================================ */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--purple-dim); border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+<!-- ============================================================
+     HEADER
+============================================================ -->
+<header>
+  <p class="label">Deep Learning · NLP · Transformers</p>
+  <h1>Language Modeling<br>using BERT</h1>
+  <p class="subtitle">Interactive Flow Diagram — Click any node to explore</p>
+</header>
+
+<p class="hint">▸ &nbsp; CLICK ANY BOX TO SEE DETAILS</p>
+
+<!-- ============================================================
+     MAIN STAGE
+============================================================ -->
+<div class="stage" id="stage">
+
+  <!-- SVG CONNECTOR (drawn on top of everything) -->
+  <svg id="svg-connector">
+    <line id="connector-line" x1="0" y1="0" x2="0" y2="0"/>
+    <circle id="connector-dot" cx="0" cy="0" r="4"/>
+  </svg>
+
+  <!-- ====================================================
+       FLOW DIAGRAM COLUMN
+  ==================================================== -->
+  <div class="flow-col" id="flow-col">
+
+    <!-- 1. Language Modeling -->
+    <div class="node chain" id="n-lm" data-key="lm">
+      <div class="node-title">Language Modeling</div>
+      <div class="node-sub">Foundation</div>
+    </div>
+
+    <div class="arrow-down"><div class="line"></div><div class="head"></div></div>
+
+    <!-- 2. N-Grams -->
+    <div class="node chain" id="n-ngram" data-key="ngram">
+      <div class="node-title">Traditional Models</div>
+      <div class="node-sub">N-grams</div>
+    </div>
+
+    <div class="arrow-down"><div class="line"></div><div class="head"></div></div>
+
+    <!-- 3. RNN / LSTM -->
+    <div class="node chain" id="n-rnn" data-key="rnn">
+      <div class="node-title">Neural Networks</div>
+      <div class="node-sub">RNN · LSTM</div>
+    </div>
+
+    <div class="arrow-down"><div class="line"></div><div class="head"></div></div>
+
+    <!-- 4. Transformers -->
+    <div class="node chain" id="n-trans" data-key="trans">
+      <div class="node-title">Transformers</div>
+      <div class="node-sub">Attention-based</div>
+    </div>
+
+    <div class="arrow-down"><div class="line"></div><div class="head"></div></div>
+
+    <!-- 5. BERT (hero node) -->
+    <div class="node bert-node" id="n-bert" data-key="bert">
+      <div class="node-title">BERT</div>
+      <div class="node-sub">Bidirectional Encoder Representations</div>
+    </div>
+
+    <!-- ================================================
+         BERT BRANCHES
+    ================================================ -->
+    <div class="bert-branches">
+
+      <!-- Vertical stem from BERT down -->
+      <div class="branch-connector" id="branch-connector">
+        <div style="display:flex; flex-direction:column; align-items:center; z-index:2;">
+          <div class="vert-stem"></div>
+        </div>
+        <!-- Horizontal bar -->
+        <div class="horiz-bar"></div>
+      </div>
+
+      <!-- Three branch columns side-by-side -->
+      <div style="display:flex; justify-content:center; gap:10px; width:100%; align-items:flex-start;">
+
+        <!-- ── BRANCH 1: FEATURES ── -->
+        <div class="branch-group" id="bg-features">
+          <div class="branch-drop"></div>
+          <div class="branch-arrow-head"></div>
+          <div class="node branch" id="n-feat" data-key="feat">
+            <div class="node-title">Features</div>
+          </div>
+          <div class="leaf-stem"></div>
+          <div class="leaf-row">
+            <div class="leaf-arrow-tiny"></div>
+            <div class="node leaf" id="n-bidir" data-key="bidir">
+              <div class="node-title">Bidirectional</div>
+            </div>
+            <div class="leaf-arrow-tiny"></div>
+            <div class="node leaf" id="n-pretrain" data-key="pretrain">
+              <div class="node-title">Pre-trained</div>
+            </div>
+            <div class="leaf-arrow-tiny"></div>
+            <div class="node leaf" id="n-ctx" data-key="ctx">
+              <div class="node-title">Context Understanding</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── BRANCH 2: COMPONENTS ── -->
+        <div class="branch-group" id="bg-components">
+          <div class="branch-drop"></div>
+          <div class="branch-arrow-head"></div>
+          <div class="node branch" id="n-comp" data-key="comp">
+            <div class="node-title">Components</div>
+          </div>
+          <div class="leaf-stem"></div>
+          <div class="leaf-row">
+            <div class="leaf-arrow-tiny"></div>
+            <div class="node leaf" id="n-enc" data-key="enc">
+              <div class="node-title">Encoder</div>
+            </div>
+            <div class="leaf-arrow-tiny"></div>
+            <div class="node leaf" id="n-attn" data-key="attn">
+              <div class="node-title">Attention Mechanism</div>
+            </div>
+            <div class="leaf-arrow-tiny"></div>
+            <div class="node leaf" id="n-tok" data-key="tok">
+              <div class="node-title">Tokenization</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── BRANCH 3: TRAINING ── -->
+        <div class="branch-group" id="bg-training">
+          <div class="branch-drop"></div>
+          <div class="branch-arrow-head"></div>
+          <div class="node branch" id="n-train" data-key="train">
+            <div class="node-title">Training</div>
+          </div>
+          <div class="leaf-stem"></div>
+          <div class="leaf-row">
+            <div class="leaf-arrow-tiny"></div>
+            <div class="node leaf" id="n-mlm" data-key="mlm">
+              <div class="node-title">MLM</div>
+            </div>
+            <div class="leaf-arrow-tiny"></div>
+            <div class="node leaf" id="n-nsp" data-key="nsp">
+              <div class="node-title">NSP</div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- end 3-col flex -->
+    </div><!-- end bert-branches -->
+  </div><!-- end flow-col -->
+
+
+  <!-- ====================================================
+       DESCRIPTION PANEL COLUMN
+  ==================================================== -->
+  <div class="panel-col">
+    <div id="desc-panel">
+
+      <!-- Default placeholder (shown before any click) -->
+      <div class="panel-placeholder" id="panel-placeholder">
+        <svg width="36" height="36" fill="none" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" stroke="#9333ea" stroke-width="1.5"/>
+          <path d="M12 8v4m0 4h.01" stroke="#9333ea" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span>Select a node<br>to view details</span>
+      </div>
+
+      <!-- Content area (populated on click) -->
+      <div id="panel-content" style="display:none;"></div>
+
+    </div>
+  </div>
+
+</div><!-- end .stage -->
+
+
+<!-- ============================================================
+     JAVASCRIPT
+============================================================ -->
+<script>
+  /* ============================================================
+     1. DESCRIPTIONS DATA STORE
+     Each key maps to { title, badge, body }
+  ============================================================ */
+  const descriptions = {
+    lm: {
+      title: "Language Modeling",
+      badge: "Foundation",
+      body: "Language Modeling teaches machines to understand and predict text. It forms the backbone of NLP systems by learning the statistical patterns and structure of human language."
+    },
+    ngram: {
+      title: "Traditional Models — N-grams",
+      badge: "Classical NLP",
+      body: "N-gram models predict the next word based on the previous N−1 words. Simple and fast, but they fail to capture long-range dependencies and require huge memory for large vocabularies."
+    },
+    rnn: {
+      title: "Neural Networks — RNN & LSTM",
+      badge: "Sequential Models",
+      body: "RNNs process text sequentially, passing hidden states forward. LSTMs solve the vanishing gradient problem using gating mechanisms, enabling memory of longer sequences — but they're slow to train."
+    },
+    trans: {
+      title: "Transformers",
+      badge: "Attention Architecture",
+      body: "Transformers use self-attention to process all words in parallel rather than sequentially. Introduced in 'Attention Is All You Need' (2017), they revolutionized NLP with speed and scalability."
+    },
+    bert: {
+      title: "BERT",
+      badge: "Google AI · 2018",
+      body: "Bidirectional Encoder Representations from Transformers. BERT reads text from both left-to-right AND right-to-left simultaneously, capturing full context. Pre-trained on massive corpora and fine-tunable for any NLP task."
+    },
+    feat: {
+      title: "BERT Features",
+      badge: "Core Properties",
+      body: "BERT is defined by three key properties: bidirectionality (reads both directions), pre-training on large text corpora, and deep contextual understanding of language meaning."
+    },
+    bidir: {
+      title: "Bidirectional",
+      badge: "Feature",
+      body: "Unlike earlier models that read left-to-right only, BERT processes context from both directions at once. This means it understands a word's meaning based on all surrounding words, not just the ones before it."
+    },
+    pretrain: {
+      title: "Pre-trained",
+      badge: "Feature",
+      body: "BERT is trained on BooksCorpus and the entire English Wikipedia (3.3 billion words) before fine-tuning. This massive pre-training gives it rich language knowledge out of the box."
+    },
+    ctx: {
+      title: "Context Understanding",
+      badge: "Feature",
+      body: "BERT produces dynamic embeddings that change based on context. The word 'bank' in 'river bank' vs 'bank account' will have completely different vector representations — a major leap over static embeddings."
+    },
+    comp: {
+      title: "BERT Components",
+      badge: "Architecture",
+      body: "BERT's architecture is built from three main components: a stack of Transformer Encoder layers, multi-head Self-Attention mechanisms, and a WordPiece Tokenizer for input processing."
+    },
+    enc: {
+      title: "Encoder",
+      badge: "Component",
+      body: "BERT uses only the Encoder part of the Transformer. BERT-Base has 12 encoder layers stacked on top of each other; BERT-Large uses 24 layers. Each layer refines the contextual representation of every token."
+    },
+    attn: {
+      title: "Attention Mechanism",
+      badge: "Component",
+      body: "Multi-head self-attention allows each word to attend to every other word in the sentence simultaneously. Different attention heads capture different types of relationships — syntax, coreference, semantics, and more."
+    },
+    tok: {
+      title: "Tokenization",
+      badge: "Component",
+      body: "BERT uses WordPiece tokenization, splitting rare or unknown words into sub-word units (e.g., 'unbelievable' → 'un', '##believ', '##able'). This keeps the vocabulary size manageable while handling any word."
+    },
+    train: {
+      title: "BERT Training Tasks",
+      badge: "Pre-training",
+      body: "BERT is pre-trained using two self-supervised objectives simultaneously: Masked Language Modeling (MLM) and Next Sentence Prediction (NSP), requiring no human-labeled data."
+    },
+    mlm: {
+      title: "Masked Language Model",
+      badge: "Training Task",
+      body: "During pre-training, 15% of input tokens are randomly masked. BERT must predict the original masked words using all surrounding context. This forces it to learn deep bidirectional representations."
+    },
+    nsp: {
+      title: "Next Sentence Prediction",
+      badge: "Training Task",
+      body: "BERT is given two sentences and must predict whether Sentence B naturally follows Sentence A in a real document. This trains BERT to understand discourse-level relationships between sentences."
+    }
+  };
+
+
+  /* ============================================================
+     2. DOM REFERENCES
+  ============================================================ */
+  const panel       = document.getElementById('desc-panel');
+  const panelContent = document.getElementById('panel-content');
+  const placeholder  = document.getElementById('panel-placeholder');
+  const svgLine      = document.getElementById('connector-line');
+  const svgDot       = document.getElementById('connector-dot');
+  const svg          = document.getElementById('svg-connector');
+  const stage        = document.getElementById('stage');
+
+  let activeNode = null; // Track currently selected node
+
+
+  /* ============================================================
+     3. NODE CLICK HANDLER
+  ============================================================ */
+  function handleNodeClick(node) {
+    const key = node.dataset.key;
+    if (!key || !descriptions[key]) return;
+
+    // Remove 'active' from previously selected node
+    if (activeNode) activeNode.classList.remove('active');
+
+    // Mark new active node
+    node.classList.add('active');
+    activeNode = node;
+
+    const data = descriptions[key];
+
+    // Build panel HTML
+    panelContent.innerHTML = `
+      <div class="panel-content-inner">
+        <p class="panel-tag">▸ &nbsp; Concept Details</p>
+        <h2 class="panel-title">${data.title}</h2>
+        <p class="panel-body">${data.body}</p>
+        <span class="panel-badge">${data.badge}</span>
+      </div>
+    `;
+
+    // Hide placeholder, show content
+    placeholder.style.display  = 'none';
+    panelContent.style.display = 'block';
+
+    // Show panel with animation
+    panel.classList.add('visible');
+
+    // Draw connector line after a short delay (let layout settle)
+    requestAnimationFrame(() => {
+      setTimeout(() => drawConnector(node), 30);
+    });
+  }
+
+
+  /* ============================================================
+     4. SVG CONNECTOR LINE
+     Draws a dashed line from the right edge of the active node
+     to the left edge of the description panel.
+  ============================================================ */
+  function drawConnector(node) {
+    const stageRect = stage.getBoundingClientRect();
+    const nodeRect  = node.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+
+    // Start: right-center of node (relative to stage)
+    const x1 = nodeRect.right  - stageRect.left;
+    const y1 = nodeRect.top + nodeRect.height / 2 - stageRect.top;
+
+    // End: left-center of panel (relative to stage)
+    const x2 = panelRect.left  - stageRect.left;
+    const y2 = panelRect.top + panelRect.height * 0.25 - stageRect.top;
+
+    // Midpoints for a soft S-curve effect via two line segments
+    const mx = (x1 + x2) / 2;
+
+    // Use a simple cubic bezier path instead of a straight line
+    svgLine.setAttribute('d', `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
+    svgLine.setAttribute('x1', x1);
+    svgLine.setAttribute('y1', y1);
+    svgLine.setAttribute('x2', x2);
+    svgLine.setAttribute('y2', y2);
+
+    // Dot at start of line
+    svgDot.setAttribute('cx', x1);
+    svgDot.setAttribute('cy', y1);
+
+    svgLine.classList.add('visible');
+    svgDot.classList.add('visible');
+  }
+
+  // Make svgLine a path element for cubic bezier support
+  // (We'll replace it in the SVG with a <path>)
+
+
+  /* ============================================================
+     5. ATTACH CLICK EVENTS TO ALL NODES
+  ============================================================ */
+  document.querySelectorAll('.node').forEach(node => {
+    node.addEventListener('click', () => handleNodeClick(node));
+  });
+
+
+  /* ============================================================
+     6. STAGGER ANIMATION ON PAGE LOAD
+     Nodes fade + slide up one by one in DOM order
+  ============================================================ */
+  function animateNodes() {
+    const nodes = document.querySelectorAll('.node');
+    const arrows = document.querySelectorAll('.arrow-down');
+
+    nodes.forEach((node, i) => {
+      setTimeout(() => {
+        node.style.transition = 'opacity .5s ease, transform .5s ease, border-color .35s ease, box-shadow .35s ease, background .35s ease';
+        node.style.opacity   = '1';
+        node.style.transform = 'translateY(0)';
+      }, 120 + i * 110);
+    });
+
+    arrows.forEach((arr, i) => {
+      setTimeout(() => {
+        arr.classList.add('visible');
+      }, 250 + i * 110);
+    });
+
+    // Branch connectors
+    setTimeout(() => {
+      document.getElementById('branch-connector').classList.add('visible');
+    }, 900);
+  }
+
+  window.addEventListener('load', animateNodes);
+
+
+  /* ============================================================
+     7. REDRAW CONNECTOR ON RESIZE
+     (So the line stays aligned if the window is resized)
+  ============================================================ */
+  window.addEventListener('resize', () => {
+    if (activeNode) drawConnector(activeNode);
+  });
+
+</script>
+
+<!-- 
+  Upgrade: Replace <line> with <path> in SVG for cubic bezier support.
+  We do this inline so we don't need to touch the JS logic.
+-->
+<script>
+  // Replace the <line> connector with a <path> element for curved support
+  const oldLine = document.getElementById('connector-line');
+  const newPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  newPath.id = 'connector-line';
+  newPath.setAttribute('stroke', 'var(--purple)');
+  newPath.setAttribute('stroke-width', '1.5');
+  newPath.setAttribute('stroke-dasharray', '5 4');
+  newPath.setAttribute('fill', 'none');
+  newPath.style.cssText = 'opacity:0; transition: opacity .4s ease; filter: drop-shadow(0 0 3px rgba(147,51,234,.7));';
+  oldLine.replaceWith(newPath);
+
+  // Re-reference after replacement
+  window._connLine = document.getElementById('connector-line');
+
+  // Patch drawConnector to use path 'd' attribute
+  const _origDraw = drawConnector;
+  function drawConnector(node) {
+    const stageRect = stage.getBoundingClientRect();
+    const nodeRect  = node.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+
+    const x1 = nodeRect.right  - stageRect.left;
+    const y1 = nodeRect.top + nodeRect.height / 2 - stageRect.top;
+    const x2 = panelRect.left  - stageRect.left;
+    const y2 = panelRect.top + panelRect.height * 0.28 - stageRect.top;
+    const mx = (x1 + x2) / 2;
+
+    const path = document.getElementById('connector-line');
+    path.setAttribute('d', `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`);
+    path.style.opacity = '1';
+
+    svgDot.setAttribute('cx', x1);
+    svgDot.setAttribute('cy', y1);
+    svgDot.style.opacity = '1';
+  }
+</script>
+
+</body>
+</html>
